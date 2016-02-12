@@ -8,10 +8,13 @@ import logstash
 from logstash_formatter import LogstashFormatter
 import ConfigParser
 from datetime import datetime
-logging.basicConfig(level=logging.INFO)
+#logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger('Garmin Log Importer')
+logger.setLevel(logging.INFO)
 handler = logstash.LogstashHandler('localhost', 6400, version=1)
+#handler.setLevel(logging.INFO)
 handlerLocal = logging.StreamHandler()
+handlerLocal.setLevel(logging.WARN)
 formatter = LogstashFormatter()
 
 handler.setFormatter(formatter)
@@ -58,17 +61,13 @@ def convertNumbers(row, logDict):
   if durationMinutes:
     logDict["Duration Minutes"]=durationMinutes
   for field in config.get('config','csv_integers').split(','):
-    try:
-      if logDict[field] != "--":
+    if field in logDict:
+      if "--" not in logDict[field]:
         logDict[field]=int(logDict[field].translate(None, '\",'))
-    except:
-      pass
   for field in config.get('config','csv_floats').split(','):
-    try:
-      if logDict[field] != "--":
-        logDict[field]=float(logDict[field].translate('\",'))
-    except:
-      pass
+    if field in logDict:
+      if "--" not in logDict[field]:
+        logDict[field]=float(logDict[field].translate(None, '\",'))
   return logDict
 
 def setDate(row, logDict):
@@ -83,22 +82,29 @@ def parseRunning(row):
   logDict=dict()
   for field in config.get('activities','Running_fields').split(','):
     val=row[csvOrderDict[field]]
-    if val != "--":
+    if "--" not in val:
       logDict[field]=val
   try:  
     durationSeconds, durationMinutes = timeToDuration(re.sub('min.*$', '', logDict["Avg Speed(Avg Pace)"]))
+    logDict["Avg Pace"] = logDict["Avg Speed(Avg Pace)"]
     del logDict["Avg Speed(Avg Pace)"]
     logDict["Avg Pace(seconds)"]=durationSeconds
     durationSeconds=None
+  except:
+    logger.warn("Missing Avg pace field:{0}".format(row))
+    pass
+  try: 
     durationSeconds, durationMinutes = timeToDuration(re.sub('min.*$', '', logDict["Max Speed(Best Pace)"]))
+    logDict["Best Pace" ] =  logDict["Max Speed(Best Pace)"]
     del logDict["Max Speed(Best Pace)"]
     logDict["Best Pace(seconds)"]=durationSeconds
   except:
-    logger.error("{0} Was missing pace field(s)".format(row))
+    logger.warn("Missing Best pace field:{0}".format(row))
     pass 
   logDict=convertNumbers(row, logDict)
   logDict=setDate(row, logDict)
   logger.info(logDict) 
+  logger.debug("Successfully imported row:{0}".format(row))
 
 def parseStrengthTraining(row):
   logDict=dict()
@@ -109,6 +115,7 @@ def parseStrengthTraining(row):
   logDict=convertNumbers(row, logDict)
   logDict=setDate(row, logDict)
   logger.info(logDict) 
+  logger.debug("Successfully imported row:{0}".format(row))
 
 def parseCycling(row):
   logDict=dict()
@@ -119,6 +126,7 @@ def parseCycling(row):
   logDict=convertNumbers(row, logDict)
   logDict=setDate(row, logDict)
   logger.info(logDict) 
+  logger.debug("Successfully imported row:{0}".format(row))
 
 def parseOpenWaterSwimming(row):
   logDict=dict()
@@ -129,6 +137,7 @@ def parseOpenWaterSwimming(row):
   logDict=convertNumbers(row, logDict)
   logDict=setDate(row, logDict)
   logger.info(logDict) 
+  logger.debug("Successfully imported row:{0}".format(row))
 
 def parseLapSwimming(row):
   logDict=dict()
@@ -136,33 +145,42 @@ def parseLapSwimming(row):
     val=row[csvOrderDict[field]]
     if val != "--":
       logDict[field]=val
-  logDict["Distance_Meters"]=logDict["Distance"].translate(None,',m')
-  del logDict["Distance"]
+  try:
+    logDict["Distance_Meters"]=int(logDict["Distance"].translate(None,',m'))
+    logDict["Distance"]=str(float(logDict["Distance"].translate(None,',m'))/1000)
+  except:
+    logger.warn("Could not convert swim time:{0}".format(row))
   durationSeconds, durationMinutes = timeToDuration(re.sub('min.*$', '', logDict["Avg Speed(Avg Pace)"]))
+  logDict["Avg Pace"] = logDict["Avg Speed(Avg Pace)"]
   del logDict["Avg Speed(Avg Pace)"]
   logDict["Avg Pace(seconds)"]=durationSeconds
   durationSeconds=None
   durationSeconds, durationMinutes = timeToDuration(re.sub('min.*$', '', logDict["Max Speed(Best Pace)"]))
+  logDict["Best Pace" ] =  logDict["Max Speed(Best Pace)"]
   del logDict["Max Speed(Best Pace)"]
   logDict["Best Pace(seconds)"]=durationSeconds
   logDict=convertNumbers(row, logDict)
   logDict=setDate(row, logDict)
   logger.info(logDict) 
+  logger.debug("Successfully imported row:{0}".format(row))
+
 
 def readCsv():
   with open('c.csv', 'r') as csvFile:
     readCsv = csv.reader(csvFile, delimiter=',')
     for row in readCsv:
-      if row[csvOrderDict["Activity Type"]] == "Running" or row[csvOrderDict["Activity Type"]] == "Treadmill Running":
+      if row[csvOrderDict["Activity Type"]] == "Running" or row[csvOrderDict["Activity Type"]] == "Treadmill Running" or row[csvOrderDict["Activity Type"]] == "Walking":
         parseRunning(row)
-      if row[csvOrderDict["Activity Type"]] == "Cycling":
+      elif row[csvOrderDict["Activity Type"]] == "Cycling" or row[csvOrderDict["Activity Type"]] == "Rowing" :
         parseCycling(row)
-      if row[csvOrderDict["Activity Type"]] == "Lap Swimming":
+      elif row[csvOrderDict["Activity Type"]] == "Lap Swimming":
         parseLapSwimming(row)
-      if row[csvOrderDict["Activity Type"]] == "Open Water Swimming":
+      elif row[csvOrderDict["Activity Type"]] == "Open Water Swimming" or  row[csvOrderDict["Activity Type"]] == "Swimming":
         parseOpenWaterSwimming(row)
-      if row[csvOrderDict["Activity Type"]] == "Strength Training":
+      elif row[csvOrderDict["Activity Type"]] == "Strength Training" or row[csvOrderDict["Activity Type"]] == "Other"  :
         parseStrengthTraining(row)
+      else:
+        logger.error("Missing parser for Activity Type:{0}".format(row[csvOrderDict["Activity Type"]]))
       
 
 
