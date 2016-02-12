@@ -1,6 +1,4 @@
 #!/usr/bin/python2
-
-
 import csv
 import re
 import logging
@@ -8,28 +6,20 @@ import logstash
 from logstash_formatter import LogstashFormatter
 import ConfigParser
 from datetime import datetime
-#logging.basicConfig(level=logging.INFO)
+
+
+#Setup Logger
 logger = logging.getLogger('Garmin Log Importer')
 logger.setLevel(logging.INFO)
 handler = logstash.LogstashHandler('localhost', 6400, version=1)
-#handler.setLevel(logging.INFO)
 handlerLocal = logging.StreamHandler()
 handlerLocal.setLevel(logging.WARN)
 formatter = LogstashFormatter()
-
 handler.setFormatter(formatter)
 logger.addHandler(handler)
 logger.addHandler(handlerLocal)
 
 confFile='garmin.conf'
-
-##activity types:
-#Cycling
-#Lap Swimming
-#Open Water Swimming
-#Running
-#Strength Training
-#Treadmill Running
 
 
 def loadConfig(confFile):
@@ -164,7 +154,6 @@ def parseLapSwimming(row):
   logger.info(logDict) 
   logger.debug("Successfully imported row:{0}".format(row))
 
-
 def readCsv():
   with open('c.csv', 'r') as csvFile:
     readCsv = csv.reader(csvFile, delimiter=',')
@@ -182,7 +171,6 @@ def readCsv():
       else:
         logger.error("Missing parser for Activity Type:{0}".format(row[csvOrderDict["Activity Type"]]))
       
-
 
 def buildActivityOrder():
   csvOrderDict=dict()
