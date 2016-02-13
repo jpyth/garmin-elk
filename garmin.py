@@ -47,9 +47,9 @@ def timeToDuration(time):
 def convertNumbers(row, logDict):
   durationSeconds, durationMinutes = timeToDuration(row[csvOrderDict["Time"]])
   if durationSeconds:
-    logDict["Duration Seconds"]=durationSeconds
+    logDict["Duration_Seconds"]=durationSeconds
   if durationMinutes:
-    logDict["Duration Minutes"]=durationMinutes
+    logDict["Duration_Minutes"]=durationMinutes
   for field in config.get('config','csv_integers').split(','):
     if field in logDict:
       if "--" not in logDict[field]:
@@ -78,7 +78,7 @@ def parseRunning(row):
     durationSeconds, durationMinutes = timeToDuration(re.sub('min.*$', '', logDict["Avg Speed(Avg Pace)"]))
     logDict["Avg Pace"] = logDict["Avg Speed(Avg Pace)"]
     del logDict["Avg Speed(Avg Pace)"]
-    logDict["Avg Pace(seconds)"]=durationSeconds
+    logDict["Avg Pace_seconds"]=durationSeconds
     durationSeconds=None
   except:
     logger.warn("Missing Avg pace field:{0}".format(row))
@@ -87,14 +87,13 @@ def parseRunning(row):
     durationSeconds, durationMinutes = timeToDuration(re.sub('min.*$', '', logDict["Max Speed(Best Pace)"]))
     logDict["Best Pace" ] =  logDict["Max Speed(Best Pace)"]
     del logDict["Max Speed(Best Pace)"]
-    logDict["Best Pace(seconds)"]=durationSeconds
+    logDict["Best Pace_seconds"]=durationSeconds
   except:
     logger.warn("Missing Best pace field:{0}".format(row))
     pass 
   logDict=convertNumbers(row, logDict)
   logDict=setDate(row, logDict)
-  logger.info(logDict) 
-  logger.debug("Successfully imported row:{0}".format(row))
+  sendEvent(logDict, row)
 
 def parseStrengthTraining(row):
   logDict=dict()
@@ -104,8 +103,7 @@ def parseStrengthTraining(row):
       logDict[field]=val
   logDict=convertNumbers(row, logDict)
   logDict=setDate(row, logDict)
-  logger.info(logDict) 
-  logger.debug("Successfully imported row:{0}".format(row))
+  sendEvent(logDict, row)
 
 def parseCycling(row):
   logDict=dict()
@@ -115,8 +113,7 @@ def parseCycling(row):
       logDict[field]=val
   logDict=convertNumbers(row, logDict)
   logDict=setDate(row, logDict)
-  logger.info(logDict) 
-  logger.debug("Successfully imported row:{0}".format(row))
+  sendEvent(logDict, row)
 
 def parseOpenWaterSwimming(row):
   logDict=dict()
@@ -126,8 +123,7 @@ def parseOpenWaterSwimming(row):
       logDict[field]=val
   logDict=convertNumbers(row, logDict)
   logDict=setDate(row, logDict)
-  logger.info(logDict) 
-  logger.debug("Successfully imported row:{0}".format(row))
+  sendEvent(logDict, row)
 
 def parseLapSwimming(row):
   logDict=dict()
@@ -143,16 +139,23 @@ def parseLapSwimming(row):
   durationSeconds, durationMinutes = timeToDuration(re.sub('min.*$', '', logDict["Avg Speed(Avg Pace)"]))
   logDict["Avg Pace"] = logDict["Avg Speed(Avg Pace)"]
   del logDict["Avg Speed(Avg Pace)"]
-  logDict["Avg Pace(seconds)"]=durationSeconds
+  logDict["Avg Pace_seconds"]=durationSeconds
   durationSeconds=None
   durationSeconds, durationMinutes = timeToDuration(re.sub('min.*$', '', logDict["Max Speed(Best Pace)"]))
   logDict["Best Pace" ] =  logDict["Max Speed(Best Pace)"]
   del logDict["Max Speed(Best Pace)"]
-  logDict["Best Pace(seconds)"]=durationSeconds
+  logDict["Best Pace_seconds"]=durationSeconds
   logDict=convertNumbers(row, logDict)
   logDict=setDate(row, logDict)
+  sendEvent(logDict, row)
+
+def sendEvent(logDict, row):
+  for key in logDict.keys():
+    logDict[re.sub("\(.*$", '', re.sub(' ', '_', key))]=logDict.pop(key)
   logger.info(logDict) 
   logger.debug("Successfully imported row:{0}".format(row))
+
+
 
 def readCsv():
   with open('c.csv', 'r') as csvFile:
