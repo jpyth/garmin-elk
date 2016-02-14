@@ -6,26 +6,60 @@ import logstash
 from logstash_formatter import LogstashFormatter
 import ConfigParser
 from datetime import datetime
-
+from elasticsearch import Elasticsearch
+import json
+import time
+import optparse
+import sys
 
 #Setup Logger
-logger = logging.getLogger('Garmin Log Importer')
-logger.setLevel(logging.INFO)
-handler = logstash.LogstashHandler('localhost', 6400, version=1)
-handlerLocal = logging.StreamHandler()
-handlerLocal.setLevel(logging.WARN)
-formatter = LogstashFormatter()
-handler.setFormatter(formatter)
-logger.addHandler(handler)
-logger.addHandler(handlerLocal)
-
-confFile='garmin.conf'
-
 
 def loadConfig(confFile):
   config = ConfigParser.ConfigParser()
   config.read(confFile)
   return config
+
+
+
+def buildMatchQuery(logDict):
+  '''builds the elasitcsearch query.'''
+  body = {
+      "filter" : {
+          "bool" : {
+              "must" : []
+              }
+          }
+      }
+  for field, value in logDict.items():
+    if field  == "Start":
+      mustQ = {
+          "term" : {
+              "{0}.raw".format(field) : value
+              }
+          }
+      body["filter"]["bool"]["must"].append(mustQ)
+  logger.debug(json.dumps(body, sort_keys=False, indent=2))
+  return body
+
+
+def queryES(body, size, fields=None):
+  '''the acually query function towards elasticsearch.'''
+  logger.debug("Final Query:\n{0}".format(json.dumps(body, sort_keys=False, indent=2)))
+  es = Elasticsearch(["localhost"], sniff_on_start=False, sniff_on_connection_fail=False, sniffer_timeout=60)
+  if fields:
+    logger.debug("Fields: %s" % (fields) )
+    res = es.search(index="garmin*", size=size, sort=["@timestamp:desc"], body=body, fields=fields)
+  else:
+    res = es.search(index="garmin*", size=size, sort=["@timestamp:desc"], body=body)
+  logger.debug("Elastic Search Results\n{0}".format(json.dumps(res, sort_keys=False, indent=2)))
+  return res
+
+
+def checkES(logDict):
+  body=buildMatchQuery(logDict)
+  res = queryES(body, 1)
+  return res["hits"]["total"]
+
 
 def timeToDuration(time):
   length=len(time.split(":"))
@@ -42,22 +76,26 @@ def timeToDuration(time):
     durationSeconds=int(m*60+s)
     durationMinutes=m
     return durationSeconds, durationMinutes
-  return None, None
+  return 0, 0
 
 def convertNumbers(row, logDict):
   durationSeconds, durationMinutes = timeToDuration(row[csvOrderDict["Time"]])
-  if durationSeconds:
+  if durationSeconds >=0:
     logDict["Duration_Seconds"]=durationSeconds
-  if durationMinutes:
+  if durationMinutes >=0:
     logDict["Duration_Minutes"]=durationMinutes
   for field in config.get('config','csv_integers').split(','):
     if field in logDict:
       if "--" not in logDict[field]:
         logDict[field]=int(logDict[field].translate(None, '\",'))
+      else:
+        print row
   for field in config.get('config','csv_floats').split(','):
     if field in logDict:
       if "--" not in logDict[field]:
         logDict[field]=float(logDict[field].translate(None, '\",'))
+      else:
+        print row
   return logDict
 
 def setDate(row, logDict):
@@ -81,7 +119,7 @@ def parseRunning(row):
     logDict["Avg Pace_seconds"]=durationSeconds
     durationSeconds=None
   except:
-    logger.warn("Missing Avg pace field:{0}".format(row))
+    logger.debug("Missing Avg pace field:{0}".format(row))
     pass
   try: 
     durationSeconds, durationMinutes = timeToDuration(re.sub('min.*$', '', logDict["Max Speed(Best Pace)"]))
@@ -89,7 +127,7 @@ def parseRunning(row):
     del logDict["Max Speed(Best Pace)"]
     logDict["Best Pace_seconds"]=durationSeconds
   except:
-    logger.warn("Missing Best pace field:{0}".format(row))
+    logger.debug("Missing Best pace field:{0}".format(row))
     pass 
   logDict=convertNumbers(row, logDict)
   logDict=setDate(row, logDict)
@@ -131,11 +169,13 @@ def parseLapSwimming(row):
     val=row[csvOrderDict[field]]
     if val != "--":
       logDict[field]=val
+    else:
+      logDict[field]="0"
   try:
     logDict["Distance_Meters"]=int(logDict["Distance"].translate(None,',m'))
     logDict["Distance"]=str(float(logDict["Distance"].translate(None,',m'))/1000)
   except:
-    logger.warn("Could not convert swim time:{0}".format(row))
+    logger.debug("Could not convert distance:{0}".format(row))
   durationSeconds, durationMinutes = timeToDuration(re.sub('min.*$', '', logDict["Avg Speed(Avg Pace)"]))
   logDict["Avg Pace"] = logDict["Avg Speed(Avg Pace)"]
   del logDict["Avg Speed(Avg Pace)"]
@@ -152,16 +192,25 @@ def parseLapSwimming(row):
 def sendEvent(logDict, row):
   for key in logDict.keys():
     logDict[re.sub("\(.*$", '', re.sub(' ', '_', key))]=logDict.pop(key)
-  logger.info(logDict) 
-  logger.debug("Successfully imported row:{0}".format(row))
+  if not OPTIONS.skipCheck:
+    resCount = checkES(logDict) 
+    if int(resCount) == 0:
+      logger.info(logDict) 
+      logger.debug("Successfully imported row:{0}".format(row))
+    else:
+      logger.debug("Skipping row:{0}".format(row))
+  else:
+    logger.info(logDict) 
+    logger.debug("Successfully imported row:{0}".format(row))
+    
 
-
-
-def readCsv():
-  with open('c.csv', 'r') as csvFile:
+def readCsv(csvFile):
+  with open(csvFile, 'r') as csvFile:
     readCsv = csv.reader(csvFile, delimiter=',')
     for row in readCsv:
-      if row[csvOrderDict["Activity Type"]] == "Running" or row[csvOrderDict["Activity Type"]] == "Treadmill Running" or row[csvOrderDict["Activity Type"]] == "Walking":
+      if len(row) == 1:
+        continue
+      elif row[csvOrderDict["Activity Type"]] == "Running" or row[csvOrderDict["Activity Type"]] == "Treadmill Running" or row[csvOrderDict["Activity Type"]] == "Walking":
         parseRunning(row)
       elif row[csvOrderDict["Activity Type"]] == "Cycling" or row[csvOrderDict["Activity Type"]] == "Rowing" :
         parseCycling(row)
@@ -171,6 +220,8 @@ def readCsv():
         parseOpenWaterSwimming(row)
       elif row[csvOrderDict["Activity Type"]] == "Strength Training" or row[csvOrderDict["Activity Type"]] == "Other"  :
         parseStrengthTraining(row)
+      elif row[csvOrderDict["Activity Type"]] == "Activity Type":
+        continue
       else:
         logger.error("Missing parser for Activity Type:{0}".format(row[csvOrderDict["Activity Type"]]))
       
@@ -185,6 +236,46 @@ def buildActivityOrder():
   return csvOrderDict
 
 
-config=loadConfig(confFile)
-csvOrderDict=buildActivityOrder()
-readCsv()
+def parseOptions():
+  '''Parse command line arguments into options used by the script.'''
+  parser = optparse.OptionParser(description=__doc__)
+  parser.add_option("-s", "--settings", dest="confFile",
+                    help="Specify config file", metavar="FILE", default="garmin.conf")
+  parser.add_option("-c", "--csv_file", dest="csvFile",
+                    help="Specify csv file to use", metavar="FILE",  default="Activities.csv")
+  parser.add_option("-i", "--init", dest="skipCheck",
+                    help="Skip checking elasticsearch(initial load)", action="store_true", default=False)
+  parser.add_option("-v", "--verbose", dest="verbose", action="count",
+                  help="Increase verbosity (specify multiple times for more)")
+  output_opts = optparse.OptionGroup(
+        parser, 'Output options',
+        'Choose none or many options as outputs',
+        )
+  parser.add_option_group(output_opts)
+  #If no argument are given, print help
+  if len(sys.argv) == 1:
+      parser.print_help()
+      sys.exit(1)
+  (options, args) = parser.parse_args()
+  return options
+
+if __name__ == "__main__":
+  OPTIONS = parseOptions()
+  if OPTIONS.verbose == 1 :
+    log_level = logging.DEBUG
+  else:
+    log_level = logging.INFO
+  handler = logstash.LogstashHandler('localhost', 6400, version=1)
+  logger = logging.getLogger('Garmin Log Importer')
+  logger.setLevel(log_level)
+  handlerLocal = logging.StreamHandler()
+  handler.setLevel(logging.INFO)
+  handlerLocal.setLevel(logging.INFO)
+  formatter = LogstashFormatter()
+  handler.setFormatter(formatter)
+  logger.addHandler(handler)
+  logger.addHandler(handlerLocal)
+
+  config=loadConfig(OPTIONS.confFile)
+  csvOrderDict=buildActivityOrder()
+  readCsv(OPTIONS.csvFile)
